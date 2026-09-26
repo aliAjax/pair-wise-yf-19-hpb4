@@ -1,126 +1,135 @@
+import { useState } from "react";
 import "./styles.css";
+import type { Cabinet, EnvReading, Specimen } from "./types";
+import { buildInitialCabinets, rooms, seedReadings, seedSpecimens, staff } from "./data";
+import { applyReading, formatTime, reviewUnfreeze } from "./env";
+import EnvLedger from "./components/EnvLedger";
+import CabinetBoard from "./components/CabinetBoard";
+import QueuePanel from "./components/QueuePanel";
+import LocationCard from "./components/LocationCard";
+import SpecimenDetail from "./components/SpecimenDetail";
+import IntakeForm from "./components/IntakeForm";
 
-const project = {
-  "sourceNo": 9,
-  "id": "hxyfront-62007",
-  "port": 62007,
-  "title": "植物标本馆入库",
-  "domain": "植物标本馆",
-  "prompt": "开发一个植物标本馆压制标本入库前端项目，工作人员可以录入采集号、物种名称、采集地点、海拔、生境描述、采集人、压制状态、鉴定状态和馆藏位置。页面需要有入库队列、鉴定状态筛选、采集地点信息卡、馆藏柜位记录和单份标本详情页。",
-  "palette": [
-    "#166534",
-    "#0f766e",
-    "#ca8a04"
-  ],
-  "metrics": [
-    "入库队列",
-    "待鉴定",
-    "已上柜",
-    "采集点"
-  ],
-  "filters": [
-    "待压制",
-    "待鉴定",
-    "已入库",
-    "需补照"
-  ],
-  "fields": [
-    "采集号",
-    "物种名称",
-    "采集地点",
-    "海拔",
-    "生境描述",
-    "馆藏位置"
-  ],
-  "records": [
-    [
-      "HX-240615-01",
-      "槭属待定",
-      "海拔1420m",
-      "待鉴定"
-    ],
-    [
-      "HX-240615-08",
-      "蕨类",
-      "阴湿沟谷",
-      "已压制"
-    ],
-    [
-      "HX-240616-03",
-      "菊科",
-      "柜位B-12-04",
-      "已入库"
-    ]
-  ]
-};
+const FILTERS = ["全部", "待鉴定", "鉴定中", "已鉴定", "需补照", "待复核"];
 
 function App() {
+  const [readings, setReadings] = useState<EnvReading[]>(seedReadings);
+  const [cabinets, setCabinets] = useState<Cabinet[]>(buildInitialCabinets);
+  const [specimens, setSpecimens] = useState<Specimen[]>(seedSpecimens);
+  const [selectedId, setSelectedId] = useState<string>(seedSpecimens[0].id);
+  const [filter, setFilter] = useState<string>("全部");
+
+  const selected = specimens.find((s) => s.id === selectedId) ?? specimens[0];
+
+  const isSpecimenPending = (specimen: Specimen) =>
+    specimen.cabinetId !== null && cabinets.some((c) => c.id === specimen.cabinetId && c.frozen);
+
+  const filteredSpecimens = specimens.filter((s) => {
+    if (filter === "全部") return true;
+    if (filter === "待复核") return isSpecimenPending(s);
+    return s.idStatus === filter;
+  });
+
+  const addReading = (reading: EnvReading) => {
+    setCabinets((current) => applyReading(current, readings, reading));
+    setReadings((current) => [...current, reading]);
+  };
+
+  const reviewCabinet = (cabinetId: string, reviewerId: string): { ok: boolean; message?: string } => {
+    const cabinet = cabinets.find((c) => c.id === cabinetId);
+    if (!cabinet) return { ok: false, message: "柜位不存在" };
+    const result = reviewUnfreeze(cabinet, reviewerId, readings, formatTime(new Date()));
+    if (!result.ok) return { ok: false, message: result.message };
+    setCabinets((current) => current.map((c) => (c.id === cabinetId ? result.cabinet : c)));
+    return { ok: true };
+  };
+
+  const addSpecimen = (specimen: Specimen) => {
+    setSpecimens((current) => [...current, specimen]);
+    setSelectedId(specimen.id);
+    setFilter("全部");
+  };
+
+  const metrics = [
+    { label: "入库队列", value: specimens.length },
+    { label: "待鉴定", value: specimens.filter((s) => s.idStatus === "待鉴定").length },
+    { label: "已上柜", value: specimens.filter((s) => s.cabinetId !== null).length },
+    { label: "冻结柜位", value: cabinets.filter((c) => c.frozen).length },
+  ];
+
   return (
     <main className="app">
       <section className="hero">
-        <p>{project.id} · 源提示词{project.sourceNo} · Port {project.port}</p>
-        <h1>{project.title}</h1>
-        <span>{project.prompt}</span>
+        <p>hxyfront-62007 · 植物标本馆 · Port 62007</p>
+        <h1>压制标本入库工作台</h1>
+        <span>
+          录入采集号、物种名称、采集地点、海拔、生境描述、采集人、压制状态、鉴定状态与馆藏位置。
+          入库页内置库房环境台账：值班员每班登记库房温湿度，超上限记为异常；同一库房连续两班异常即冻结库内柜位，
+          在柜标本留在原处并在队列标记“待复核”，冻结期间不再接收新标本；异常消除后须另一名值班员复核确认方可解冻。
+        </span>
       </section>
 
       <section className="metrics">
-        {project.metrics.map((metric: string, index: number) => (
-          <article key={metric}>
-            <small>{metric}</small>
-            <strong>{[86, 14, 7, 32][index] ?? 12}</strong>
+        {metrics.map((m) => (
+          <article key={m.label}>
+            <small>{m.label}</small>
+            <strong>{m.value}</strong>
           </article>
         ))}
       </section>
 
-      <section className="workspace">
-        <aside className="panel">
-          <h2>{project.domain}筛选</h2>
-          <div className="chips">
-            {project.filters.map((item: string) => (
-              <button key={item}>{item}</button>
-            ))}
-          </div>
+      <EnvLedger rooms={rooms} staff={staff} readings={readings} onAdd={addReading} />
+
+      <CabinetBoard
+        cabinets={cabinets}
+        rooms={rooms}
+        staff={staff}
+        readings={readings}
+        specimens={specimens}
+        onReview={reviewCabinet}
+      />
+
+      <div className="workspace">
+        <aside className="side">
+          <section className="panel">
+            <h2>鉴定状态筛选</h2>
+            <div className="chips">
+              {FILTERS.map((f) => (
+                <button key={f} className={f === filter ? "active" : ""} onClick={() => setFilter(f)}>
+                  {f}
+                </button>
+              ))}
+            </div>
+            <p className="muted small note">“待复核”指所在柜位被冻结、标本留在原处等待环境复核的条目。</p>
+          </section>
+          <LocationCard
+            specimen={selected}
+            specimens={specimens}
+            cabinets={cabinets}
+            rooms={rooms}
+            staff={staff}
+            readings={readings}
+          />
         </aside>
 
-        <section className="panel form-panel">
-          <div className="heading">
-            <div>
-              <p>专业字段</p>
-              <h2>新增记录</h2>
-            </div>
-            <button className="primary">保存草稿</button>
-          </div>
-          <div className="field-grid">
-            {project.fields.map((field: string) => (
-              <label key={field}>
-                <span>{field}</span>
-                <input placeholder={"填写" + field} />
-              </label>
-            ))}
-          </div>
-        </section>
-      </section>
+        <QueuePanel
+          specimens={filteredSpecimens}
+          cabinets={cabinets}
+          readings={readings}
+          selectedId={selected.id}
+          onSelect={setSelectedId}
+        />
+      </div>
 
-      <section className="panel">
-        <div className="heading">
-          <div>
-            <p>历史记录</p>
-            <h2>近期工作台</h2>
-          </div>
-          <button>导出摘要</button>
-        </div>
-        <div className="records">
-          {project.records.map((record: string[], index: number) => (
-            <article key={record.join("-")}>
-              <b>{String(index + 1).padStart(2, "0")}</b>
-              <div>
-                <h3>{record[0]}</h3>
-                <p>{record.slice(1).join(" · ")}</p>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
+      <SpecimenDetail specimen={selected} cabinets={cabinets} rooms={rooms} staff={staff} readings={readings} />
+
+      <IntakeForm
+        cabinets={cabinets}
+        rooms={rooms}
+        readings={readings}
+        existingIds={specimens.map((s) => s.id)}
+        onAdd={addSpecimen}
+      />
     </main>
   );
 }
